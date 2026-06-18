@@ -6,6 +6,27 @@ This project was conducted as part of a university Computer vision course.
 
 ---
 
+## Repository Structure
+
+```
+README.md      this file
+model.py       standalone implementation of the proposed module
+               (FAM_Module, SpatialAttention) with a forward-pass sanity check
+```
+
+This repository contains the **core module proposed in this project**, isolated so it can be run and verified independently of the full training framework. It does not include the complete distillation training pipeline (data loading, training loop, full distiller class, config system) the experiments in Section 4 were run on — see [Acknowledgements](#acknowledgements).
+
+## Usage
+
+```bash
+pip install torch
+python model.py
+```
+
+This runs a forward pass on dummy input through both the proposed `SpatialAttention` block and the full `FAM_Module` (frequency branch + proposed spatial branch + adaptive fusion), and prints the resulting tensor shapes as a sanity check.
+
+---
+
 ## 1. Background
 
 ### 1.1 Knowledge Distillation
@@ -51,22 +72,22 @@ We retain FAM-KD's global (frequency) branch unchanged and redesign the local (s
 
 Given an input feature map, the proposed local branch computes a spatial attention map as follows:
 
-1. **Channel pooling:** apply both Global Average Pooling (GAP) and Global Max Pooling (GMP) along the channel dimension, producing two single-channel spatial maps.
-2. **Concatenation:** concatenate the GAP and GMP maps along the channel axis.
-3. **Convolution + Sigmoid:** pass the concatenated map through a convolutional layer followed by a sigmoid activation to obtain a spatial attention map: `Sigmoid(Conv(x))`.
-4. This attention map is used to refine the (student) feature map by re-weighting spatially important regions.
+1. **Channel-wise pooling:** compute the channel-wise max and the channel-wise mean of the feature map, each producing a single-channel spatial map (shape `(N, 1, H, W)`).
+2. **Concatenation:** concatenate the max and mean maps along the channel axis, giving a `(N, 2, H, W)` map.
+3. **Convolution + Sigmoid:** pass the concatenated map through a `3x3` convolution followed by batch normalization and a sigmoid activation to obtain a spatial attention map: `Sigmoid(BN(Conv(x)))`.
+4. The attention map re-weights the original feature map element-wise, emphasizing spatially important regions. A `1x1` convolution + BatchNorm + ReLU then projects the result to the target channel dimension.
 
-This design gives the local branch an actual spatial receptive field and the ability to emphasize informative regions, which a bare 1×1 convolution cannot do.
+This design gives the local branch an actual spatial receptive field and the ability to emphasize informative regions, which a bare 1×1 convolution cannot do. See `model.py` for the exact implementation (`SpatialAttention` class).
 
 ### 3.2 Adaptive Fusion
 
-As in FAM-KD, the outputs of the global (frequency) branch and the proposed local (spatial) branch are combined via a weighted sum using two **learnable scalars**:
+As in FAM-KD, the outputs of the global (frequency) branch and the proposed local (spatial) branch are combined via a weighted sum using two **learnable scalars** (`rate1`, `rate2` in `model.py`, initialized to 0.5):
 
 ```
-output = γ1 · (global branch output) + γ2 · (proposed local branch output)
+output = rate1 · (global branch output) + rate2 · (proposed local branch output)
 ```
 
-Allowing γ1 and γ2 to be learned (rather than fixed) lets the network adaptively balance the contribution of each domain per layer, which helps **prevent representational collapse** into a single dominant branch.
+Allowing `rate1` and `rate2` to be learned (rather than fixed) lets the network adaptively balance the contribution of each domain per layer, which helps **prevent representational collapse** into a single dominant branch.
 
 ### 3.3 Training Objective
 
@@ -102,7 +123,7 @@ The proposed method outperforms vanilla logit-based KD and the original FAM-KD b
 
 - This project introduces a KD approach that combines **spatial attention** (image domain) with **frequency attention** (Fourier domain) for intermediate feature distillation.
 - The two branches capture **complementary** information: local spatial cues from the image domain, and global structural cues from the frequency domain.
-- **Learnable scalar fusion** (γ1, γ2) helps prevent the student representation from collapsing onto a single domain's signal.
+- **Learnable scalar fusion** (`rate1`, `rate2`) helps prevent the student representation from collapsing onto a single domain's signal.
 - Overall, this work offers a perspective on how multi-domain attentive feature maps can be leveraged for more effective knowledge distillation.
 
 ---
@@ -114,3 +135,9 @@ The proposed method outperforms vanilla logit-based KD and the original FAM-KD b
 3. Woo, S., et al. (2018). *CBAM: Convolutional Block Attention Module.* Proceedings of the European Conference on Computer Vision (ECCV).
 4. Ji, M., Heo, B., & Park, S. (2021). *Show, Attend and Distill: Knowledge Distillation via Attention-based Feature Matching.* Proceedings of the AAAI Conference on Artificial Intelligence.
 5. Mansourian, A. M., Jalali, A., Ahmadi, R., & Kasaei, S. (2026). *Attention-Guided Feature Distillation for Semantic Segmentation.* Proceedings of the IEEE/CVF Winter Conference on Applications of Computer Vision (WACV) Workshops.
+
+---
+
+## Acknowledgements
+
+The training and evaluation pipeline for this project (distiller base class, feature-alignment scaffolding, config system, and the CIFAR-100 / ResNet-56 / ResNet-20 training setup) builds on the official **FAM-KD** codebase released alongside [2], which is itself built on the [`mdistiller`](https://github.com/megvii-research/mdistiller) framework. The frequency-domain (global) branch follows FAM-KD's design as-is. This project's contribution is the **proposed local branch** (`SpatialAttention` in `model.py`), which replaces FAM-KD's original 1×1-convolution local branch, and the corresponding fusion into `FAM_Module`. `model.py` in this repository isolates that contribution into a standalone, dependency-free module for inspection and testing; it is not the full training codebase.
